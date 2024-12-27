@@ -1,0 +1,18 @@
+[package]
+name = "gleam-pkg"
+version = "0.1.0"
+authors = ["wheatfox <enkerewpo@hotmail.com>"]
+license = "Apache License"
+readme = "README.md"
+repository = "https://github.com/enkerewpo/gleam-pkg"
+keywords = ["cli","gleam-lang","gleam"]
+edition = "2024"
+categories = ["command-line-utilities"]
+
+[dependencies]
+clap = { version = "4.5.23", features = ["derive"] }
+dirs = "5.0.1"
+hexpm = {path = "./hexpm-rust"}
+serde = "1.0.216"
+serde_json = "1.0.134"
+thiserror = "2.0.9"
