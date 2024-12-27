@@ -20,9 +20,13 @@
 
 use clap::{Parser, Subcommand};
 use error::*;
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
 use hexpm::*;
 use lazy_static::lazy_static;
 use std::fs;
+use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
 mod error;
@@ -56,6 +60,10 @@ const DB_FILE: &str = "db/metadata.json";
 // lazyinit a Config
 lazy_static! {
     static ref CONFIG: Config = Config::new();
+}
+
+lazy_static! {
+    static ref HOME_ROOT_DIR: PathBuf = dirs::home_dir().unwrap().join(ROOT_DIR);
 }
 
 /// Entry point for the Gleam package manager CLI
@@ -118,6 +126,8 @@ fn install_package(root_dir: &PathBuf, package: &str) -> Result<(), GleamPkgErro
     let tarball = download_tarball(package, &version)?;
 
     save_tarball(&download_dir, package, &version, tarball)?;
+    extract(&download_dir, package, &version)?;
+    build_package(&download_dir, package, &version)?;
 
     Ok(())
 }
@@ -216,3 +226,228 @@ fn save_tarball(
     println!("Tarball saved to: {}", tarball_path.display());
     Ok(())
 }
+
+fn extract(download_dir: &PathBuf, package: &str, version: &str) -> Result<(), GleamPkgError> {
+    let tarball_path = download_dir.join(format!("{}-{}.tar", package, version));
+    let extract_dir = download_dir.join(format!("{}-{}", package, version));
+
+    // if extract_dir exists, remove it
+    if extract_dir.exists() {
+        fs::remove_dir_all(&extract_dir).map_err(|e| {
+            GleamPkgError::PackageDownloadError(format!(
+                "Failed to remove existing extract directory: {}, {}",
+                extract_dir.display(),
+                e
+            ))
+        })?;
+    }
+    fs::create_dir(&extract_dir).map_err(|e| {
+        GleamPkgError::PackageDownloadError(format!(
+            "Failed to create extract directory: {}, {}",
+            extract_dir.display(),
+            e
+        ))
+    })?;
+
+    let tar = fs::File::open(&tarball_path).map_err(|e| {
+        GleamPkgError::PackageDownloadError(format!(
+            "Failed to open tarball for extraction: {}, {}",
+            tarball_path.display(),
+            e
+        ))
+    })?;
+    let mut archive = tar::Archive::new(tar);
+    archive.unpack(&extract_dir).map_err(|e| {
+        GleamPkgError::PackageDownloadError(format!(
+            "Failed to extract tarball: {}, {}",
+            tarball_path.display(),
+            e
+        ))
+    })?;
+    println!("Tarball extracted to: {}", extract_dir.display());
+    // then enter the extracted directory and extract contents.tar.gz to contents
+    let contents_tar_gz = extract_dir.join("contents.tar.gz");
+    let contents_dir = extract_dir.join("contents");
+    let contents_tar = fs::File::open(&contents_tar_gz).map_err(|e| {
+        GleamPkgError::PackageDownloadError(format!(
+            "Failed to open contents tarball for extraction: {}, {}",
+            contents_tar_gz.display(),
+            e
+        ))
+    })?;
+    let decoder = GzDecoder::new(contents_tar);
+    let mut contents_tar = tar::Archive::new(decoder);
+    contents_tar.unpack(&contents_dir).map_err(|e| {
+        GleamPkgError::PackageDownloadError(format!(
+            "Failed to extract contents tarball: {}, {}",
+            contents_tar_gz.display(),
+            e
+        ))
+    })?;
+    println!("Contents extracted to: {}", contents_dir.display());
+    Ok(())
+}
+
+fn build_package(
+    download_dir: &PathBuf,
+    package: &str,
+    version: &str,
+) -> Result<(), GleamPkgError> {
+    // run `gleam build` in contents directory
+    let contents_dir = download_dir.join(format!("{}-{}/contents", package, version));
+    let output = std::process::Command::new("gleam")
+        .arg("build")
+        .current_dir(&contents_dir)
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .output()
+        .map_err(|e| {
+            GleamPkgError::PackageBuildError(format!(
+                "Failed to run `gleam build` in contents directory: {}, {}",
+                contents_dir.display(),
+                e
+            ))
+        })?;
+    if !output.status.success() {
+        return Err(GleamPkgError::PackageBuildError(format!(
+            "Failed to build package: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    // then run `gleam export erlang-shipment`
+    let output = std::process::Command::new("gleam")
+        .arg("export")
+        .arg("erlang-shipment")
+        .current_dir(&contents_dir)
+        .stderr(std::process::Stdio::inherit())
+        .output()
+        .map_err(|e| {
+            GleamPkgError::PackageBuildError(format!(
+                "Failed to run `gleam export erlang-shipment` in contents directory: {}, {}",
+                contents_dir.display(),
+                e
+            ))
+        })?;
+    if !output.status.success() {
+        return Err(GleamPkgError::PackageBuildError(format!(
+            "Failed to export package: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    println!("Package built successfully, installing to apps directory");
+
+    // first remove the existing ~/.gleam_pkgs/apps/{package}-{version} directory
+    let result = fs::remove_dir_all(
+        HOME_ROOT_DIR
+            .join(APPS_DIR)
+            .join(format!("{}-{}", package, version)),
+    );
+
+    let result = fs::remove_file(HOME_ROOT_DIR.join(APPS_DIR).join(package));
+
+    // the generated erlang shipment is in the build/erlang-shipment directory
+    // copy it to ～/.gleam_pkgs/apps/{package}-{version}
+    let result = copy_dir_all(
+        contents_dir.join("build").join("erlang-shipment"),
+        HOME_ROOT_DIR
+            .join(APPS_DIR)
+            .join(format!("{}-{}", package, version)),
+    );
+    if let Err(e) = result {
+        return Err(GleamPkgError::PackageBuildError(format!(
+            "Failed to copy erlang shipment to apps directory: {}",
+            e
+        )));
+    }
+
+    // now let's create a shell named {package} in ~/.gleam_pkgs/apps
+    // it should only do one thing: cd to the {package}-{version} directory and run ./entrypoint.sh run
+    // we should pass everything after the `./entrypoint.sh run` as arguments to the entrypoint
+    let shell = format!("#!/bin/sh\ncd {}/{}/{}-{} && ./entrypoint.sh run \"$@\"\n", HOME_ROOT_DIR.display(), APPS_DIR, package, version);
+    let shell_path = HOME_ROOT_DIR.join(APPS_DIR).join(package);
+    fs::write(&shell_path, shell).map_err(|e| {
+        GleamPkgError::PackageBuildError(format!(
+            "Failed to create shell script in apps directory: {}",
+            e
+        ))
+    })?;
+
+    // enable the shell script to be executed
+    let permissions = fs::metadata(&shell_path)?.permissions();
+    let mut new_permissions = permissions.clone();
+    new_permissions.set_mode(0o755);
+    fs::set_permissions(&shell_path, new_permissions).map_err(|e| {
+        GleamPkgError::PackageBuildError(format!(
+            "Failed to set permissions on shell script: {}",
+            e
+        ))
+    })?;
+
+    path_check()?;
+
+    println!("Package installed successfully! You can run {} in your shell to use it now.", package);
+
+    Ok(())
+}
+
+fn copy_dir_all(
+    src: impl AsRef<std::path::Path>,
+    dst: impl AsRef<std::path::Path>,
+) -> Result<(), std::io::Error> {
+    fs::create_dir_all(&dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        if ty.is_dir() {
+            copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        } else {
+            fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
+/// check whether ~/.gleam_pkgs/apps is in the PATH
+/// if not, show a prompt to ask user whether to add it to the shell profile
+/// now support bash and zsh, other shells will need to add PATH manually
+pub fn path_check() -> Result<(), GleamPkgError> {
+    let user_shell = std::env::var("SHELL").unwrap();
+    let user_shell = user_shell.split('/').last().unwrap();
+    let user_shell = user_shell.split('.').next().unwrap();
+    let user_shell = user_shell.to_lowercase();
+    let profile = match user_shell.as_str() {
+        "bash" => ".bashrc",
+        "zsh" => ".zshrc",
+        _ => {
+            return Err(GleamPkgError::PathError(format!(
+                "Unsupported shell: {}",
+                user_shell
+            )))
+        }
+    };
+    let profile_path = dirs::home_dir().unwrap().join(profile);
+    let current_path = std::env::var("PATH").unwrap();
+    // println!("Current PATH: {}", current_path);
+    let keywords = ".gleam_pkgs/apps";
+    if current_path.contains(keywords) {
+        return Ok(());
+    }
+    println!(
+        "It seems that ~/.gleam_pkgs/apps is not in your PATH, do you want to add it to ~/{}? (y/n)",
+        profile
+    );
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input).unwrap();
+    if input.trim() == "y" {
+        let mut file = fs::OpenOptions::new()
+            .append(true)
+            .open(&profile_path)
+            .map_err(|e| GleamPkgError::PathError(format!("Failed to open profile: {}", e)))?;
+        file.write_all(b"\nexport PATH=$PATH:~/.gleam_pkgs/apps\n")
+            .map_err(|e| GleamPkgError::PathError(format!("Failed to write to profile: {}", e)))?;
+        println!("PATH updated successfully please run `source ~/{}` to apply the changes", profile);
+    }
+
+    Ok(())
+}
+

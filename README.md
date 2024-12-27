@@ -9,6 +9,15 @@ git clone https://github.com/enkerewpo/gleam-pkg
 git submodule update --init --recursive
 cargo build
 ```
+## usage example
+
+```bash
+# gleam-pkg install gleewhois # this will be supported when we can install gleam-pkg and run it in shell
+cargo run -- install gleewhois
+# source ~/.bashrc or ~/.zshrc because first time gleam-pkg will ask
+# whether you want to add ~/.gleam-pkgs to PATH for using the gleam app in your shell
+gleewhois --help
+```
 
 ## some design ideas
 

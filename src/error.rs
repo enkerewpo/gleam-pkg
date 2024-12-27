@@ -1,3 +1,4 @@
+use clap::error;
 use thiserror::Error;
 
 /// Custom error type for the `gleam-pkg` package manager
@@ -22,4 +23,19 @@ pub enum GleamPkgError {
 
     #[error("Failed to download package: {0}")]
     PackageDownloadError(String),
+
+    #[error("IO error: {0}")]
+    IOErr(std::io::Error),
+
+    #[error("Package build error: {0}")]
+    PackageBuildError(String),
+
+    #[error("Error inspecting PATH environment variable: {0}")]
+    PathError(String),
+}
+
+impl From<std::io::Error> for GleamPkgError {
+    fn from(error: std::io::Error) -> Self {
+        GleamPkgError::IOErr(error)
+    }
 }
