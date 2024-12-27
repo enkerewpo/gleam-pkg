@@ -1,4 +1,3 @@
-use clap::error;
 use thiserror::Error;
 
 /// Custom error type for the `gleam-pkg` package manager

@@ -1,7 +1,7 @@
 //! # Gleam Package Manager
 //!
 //! `gleam-pkg` is a command-line tool for managing Gleam CLI programs. It provides an easy way to
-//! install and manage Gleam packages.
+//! install and manage Gleam packages. Some functionality are still under development.
 //!
 //! wheatfox(enkerewpo@hotmail.com) 2024
 //!
@@ -21,8 +21,6 @@
 use clap::{Parser, Subcommand};
 use error::*;
 use flate2::read::GzDecoder;
-use flate2::write::GzEncoder;
-use hexpm::*;
 use lazy_static::lazy_static;
 use std::fs;
 use std::io::Write;
@@ -35,10 +33,18 @@ mod error;
 #[derive(Parser)]
 #[command(name = "gleam-pkg")]
 #[command(about = "Gleam package manager for installing Gleam CLI programs")]
+#[command(arg_required_else_help = true)]
 struct Cli {
+    /// The version of the Gleam package manager
+    #[arg(
+        short = 'v',
+        long = "version",
+        help = "Prints the version of the Gleam package manager"
+    )]
+    version: bool,
     /// The subcommand to execute
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 /// Subcommands supported by `gleam-pkg`
@@ -57,6 +63,21 @@ const APPS_DIR: &str = "apps";
 const DB_DIR: &str = "db";
 const DB_FILE: &str = "db/metadata.json";
 
+/// Configuration for the Gleam package manager
+struct Config {
+    api_base: String,
+    repository_base: String,
+}
+
+impl Config {
+    fn new() -> Self {
+        Config {
+            api_base: "https://hex.pm/api/".to_string(),
+            repository_base: "https://repo.hex.pm/".to_string(),
+        }
+    }
+}
+
 // lazyinit a Config
 lazy_static! {
     static ref CONFIG: Config = Config::new();
@@ -69,14 +90,30 @@ lazy_static! {
 /// Entry point for the Gleam package manager CLI
 fn main() -> Result<(), GleamPkgError> {
     let args = Cli::parse();
+
+    if args.version {
+        println!("Gleam Package Manager v{}", env!("CARGO_PKG_VERSION"));
+        println!("Software published under {}", env!("CARGO_PKG_LICENSE"));
+        println!("Author: {}", env!("CARGO_PKG_AUTHORS"));
+        return Ok(());
+    }
+
     let home_dir = dirs::home_dir().ok_or_else(|| {
         GleamPkgError::DirectoryCreationError("Unable to locate home directory".to_string())
     })?;
     let root_dir = home_dir.join(ROOT_DIR);
     setup_directories(&root_dir)?;
     match args.command {
-        Commands::Install { package } => {
+        Some(Commands::Install { package }) => {
+            let home_dir = dirs::home_dir().ok_or_else(|| {
+                GleamPkgError::DirectoryCreationError("Unable to locate home directory".to_string())
+            })?;
+            let root_dir = home_dir.join(ROOT_DIR);
+            setup_directories(&root_dir)?;
             install_package(&root_dir, &package)?;
+        }
+        None => {
+            println!("No subcommand provided. Use `gleam-pkg --help` for usage information.");
         }
     }
     Ok(())
@@ -164,6 +201,16 @@ fn fetch_metadata(package: &str) -> Result<serde_json::Value, GleamPkgError> {
     })
 }
 
+/// Extracts the version of a package from its metadata
+///
+/// # Arguments
+///
+/// * `metadata` - The metadata of the package
+///
+/// # Errors
+///
+/// Returns `GleamPkgError` if the version cannot be extracted
+///
 fn extract_version(metadata: &serde_json::Value) -> Result<String, GleamPkgError> {
     let releases = metadata["releases"].as_array().ok_or_else(|| {
         GleamPkgError::PackageDownloadError("No releases found in metadata".to_string())
@@ -177,6 +224,21 @@ fn extract_version(metadata: &serde_json::Value) -> Result<String, GleamPkgError
         })
 }
 
+/// Downloads a tarball of a package
+///
+/// # Arguments
+///
+/// * `package` - The name of the package to download
+/// * `version` - The version of the package to download
+///
+/// # Errors
+///
+/// Returns `GleamPkgError` if the download fails
+///
+/// # Returns
+///
+/// The tarball as a byte array
+///
 fn download_tarball(package: &str, version: &str) -> Result<bytes::Bytes, GleamPkgError> {
     let client = reqwest::blocking::Client::new();
     let url = format!(
@@ -209,6 +271,19 @@ fn download_tarball(package: &str, version: &str) -> Result<bytes::Bytes, GleamP
     })
 }
 
+/// Saves a tarball to disk
+///
+/// # Arguments
+///
+/// * `download_dir` - The directory where the tarball will be saved
+/// * `package` - The name of the package
+/// * `version` - The version of the package
+/// * `tarball` - The tarball as a byte array
+///
+/// # Errors
+///
+/// Returns `GleamPkgError` if the tarball cannot be saved
+///
 fn save_tarball(
     download_dir: &PathBuf,
     package: &str,
@@ -227,6 +302,18 @@ fn save_tarball(
     Ok(())
 }
 
+/// Extracts a tarball to disk
+///
+/// # Arguments
+///
+/// * `download_dir` - The directory where the tarball is saved
+/// * `package` - The name of the package
+/// * `version` - The version of the package
+///
+/// # Errors
+///
+/// Returns `GleamPkgError` if the tarball cannot be extracted
+///
 fn extract(download_dir: &PathBuf, package: &str, version: &str) -> Result<(), GleamPkgError> {
     let tarball_path = download_dir.join(format!("{}-{}.tar", package, version));
     let extract_dir = download_dir.join(format!("{}-{}", package, version));
@@ -288,6 +375,18 @@ fn extract(download_dir: &PathBuf, package: &str, version: &str) -> Result<(), G
     Ok(())
 }
 
+/// Builds a package
+/// This involves running `gleam build` and `gleam export erlang-shipment` in the contents directory
+///
+/// # Arguments
+///
+/// * `download_dir` - The directory where the package is downloaded
+/// * `package` - The name of the package
+/// * `version` - The version of the package
+///
+/// # Errors
+///
+/// Returns `GleamPkgError` if the package cannot be built
 fn build_package(
     download_dir: &PathBuf,
     package: &str,
@@ -337,13 +436,13 @@ fn build_package(
     println!("Package built successfully, installing to apps directory");
 
     // first remove the existing ~/.gleam_pkgs/apps/{package}-{version} directory
-    let result = fs::remove_dir_all(
+    let _ = fs::remove_dir_all(
         HOME_ROOT_DIR
             .join(APPS_DIR)
             .join(format!("{}-{}", package, version)),
     );
 
-    let result = fs::remove_file(HOME_ROOT_DIR.join(APPS_DIR).join(package));
+    let _ = fs::remove_file(HOME_ROOT_DIR.join(APPS_DIR).join(package));
 
     // the generated erlang shipment is in the build/erlang-shipment directory
     // copy it to ～/.gleam_pkgs/apps/{package}-{version}
@@ -361,9 +460,17 @@ fn build_package(
     }
 
     // now let's create a shell named {package} in ~/.gleam_pkgs/apps
-    // it should only do one thing: cd to the {package}-{version} directory and run ./entrypoint.sh run
-    // we should pass everything after the `./entrypoint.sh run` as arguments to the entrypoint
-    let shell = format!("#!/bin/sh\ncd {}/{}/{}-{} && ./entrypoint.sh run \"$@\"\n", HOME_ROOT_DIR.display(), APPS_DIR, package, version);
+    // it should only do one thing: cd to the {package}-{version} directory
+    // and run ./entrypoint.sh run
+    // we should pass everything after the `./entrypoint.sh run`
+    // as arguments to the entrypoint
+    let shell = format!(
+        "#!/bin/sh\ncd {}/{}/{}-{} && ./entrypoint.sh run \"$@\"\n",
+        HOME_ROOT_DIR.display(),
+        APPS_DIR,
+        package,
+        version
+    );
     let shell_path = HOME_ROOT_DIR.join(APPS_DIR).join(package);
     fs::write(&shell_path, shell).map_err(|e| {
         GleamPkgError::PackageBuildError(format!(
@@ -385,11 +492,15 @@ fn build_package(
 
     path_check()?;
 
-    println!("Package installed successfully! You can run {} in your shell to use it now.", package);
+    println!(
+        "Package installed successfully! You can run {} in your shell to use it now.",
+        package
+    );
 
     Ok(())
 }
 
+/// Recursively copy a directory and its contents to another directory
 fn copy_dir_all(
     src: impl AsRef<std::path::Path>,
     dst: impl AsRef<std::path::Path>,
@@ -422,7 +533,7 @@ pub fn path_check() -> Result<(), GleamPkgError> {
             return Err(GleamPkgError::PathError(format!(
                 "Unsupported shell: {}",
                 user_shell
-            )))
+            )));
         }
     };
     let profile_path = dirs::home_dir().unwrap().join(profile);
@@ -433,7 +544,8 @@ pub fn path_check() -> Result<(), GleamPkgError> {
         return Ok(());
     }
     println!(
-        "It seems that ~/.gleam_pkgs/apps is not in your PATH, do you want to add it to ~/{}? (y/n)",
+        "It seems that ~/.gleam_pkgs/apps is not in your PATH, \
+do you want to add it to ~/{}? (y/n)",
         profile
     );
     let mut input = String::new();
@@ -445,9 +557,11 @@ pub fn path_check() -> Result<(), GleamPkgError> {
             .map_err(|e| GleamPkgError::PathError(format!("Failed to open profile: {}", e)))?;
         file.write_all(b"\nexport PATH=$PATH:~/.gleam_pkgs/apps\n")
             .map_err(|e| GleamPkgError::PathError(format!("Failed to write to profile: {}", e)))?;
-        println!("PATH updated successfully please run `source ~/{}` to apply the changes", profile);
+        println!(
+            "PATH updated successfully please run `source ~/{}` to apply the changes",
+            profile
+        );
     }
 
     Ok(())
 }
-

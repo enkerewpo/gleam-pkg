@@ -1,8 +1,8 @@
 [package]
 name = "gleam-pkg"
-version = "0.1.0"
+version = "0.0.1"
 authors = ["wheatfox <enkerewpo@hotmail.com>"]
-license = "Apache License"
+license = "Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/enkerewpo/gleam-pkg"
 keywords = ["cli", "gleam-lang", "gleam"]
@@ -14,7 +14,6 @@ bytes = "1.9.0"
 clap = { version = "4.5.23", features = ["derive"] }
 dirs = "5.0.1"
 flate2 = "1.0.35"
-hexpm = { path = "./hexpm-rust" }
 lazy_static = "1.5.0"
 reqwest = { version = "0.12.10", features = ["blocking", "json"] }
 serde = "1.0.216"

@@ -1,3 +1,0 @@
-[submodule "hexpm-rust"]
-	path = hexpm-rust
-	url = https://github.com/enkerewpo/hexpm-rust
