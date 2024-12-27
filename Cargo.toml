@@ -1,5 +1,6 @@
 [package]
 name = "gleam-pkg"
+description = "A shell CLI package manager for Gleam"
 version = "0.0.1"
 authors = ["wheatfox <enkerewpo@hotmail.com>"]
 license = "Apache-2.0"
