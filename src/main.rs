@@ -61,7 +61,7 @@ const ROOT_DIR: &str = ".gleam_pkgs";
 const DOWNLOAD_DIR: &str = "download";
 const APPS_DIR: &str = "apps";
 const DB_DIR: &str = "db";
-const DB_FILE: &str = "db/metadata.json";
+const _DB_FILE: &str = "db/metadata.json";
 
 /// Configuration for the Gleam package manager
 struct Config {
