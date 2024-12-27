@@ -20,10 +20,6 @@ pub enum GleamPkgError {
     #[error("Failed to create directories: {0}")]
     DirectoryCreationError(String),
 
-    /// Error indicating a failure to download a package
-    ///
-    /// # Example
-    /// This error might occur if the network connection is unstable or the package URL is invalid.
     #[error("Failed to download package: {0}")]
-    DownloadError(String),
+    PackageDownloadError(String),
 }
