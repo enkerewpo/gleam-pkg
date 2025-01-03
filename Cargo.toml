@@ -11,6 +11,7 @@ edition = "2024"
 categories = ["command-line-utilities"]
 
 [dependencies]
+base64 = "0.22.1"
 bytes = "1.9.0"
 clap = { version = "4.5.23", features = ["derive"] }
 dirs = "5.0.1"

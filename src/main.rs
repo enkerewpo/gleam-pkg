@@ -18,6 +18,8 @@
 //! gleam-pkg install <package-name>
 //! ```
 
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use clap::{Parser, Subcommand};
 use error::*;
 use flate2::read::GzDecoder;
@@ -375,6 +377,28 @@ fn extract(download_dir: &PathBuf, package: &str, version: &str) -> Result<(), G
     Ok(())
 }
 
+fn erl_eval(expr: &String) -> Result<String, GleamPkgError> {
+    //  erl -noshell -eval 'expr' -s init stop
+    let output = std::process::Command::new("erl")
+        .arg("-noshell")
+        .arg("-eval")
+        .arg(expr)
+        .arg("-s")
+        .arg("init")
+        .arg("stop")
+        .output()
+        .map_err(|e| {
+            GleamPkgError::PackageBuildError(format!("Failed to run erl eval: {}, {}", expr, e))
+        })?;
+    if !output.status.success() {
+        return Err(GleamPkgError::PackageBuildError(format!(
+            "Failed to run erl eval: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
 /// Builds a package
 /// This involves running `gleam build` and `gleam export erlang-shipment` in the contents directory
 ///
@@ -413,27 +437,6 @@ fn build_package(
             String::from_utf8_lossy(&output.stderr)
         )));
     }
-
-    // // then run `gleam export erlang-shipment`
-    // let output = std::process::Command::new("gleam")
-    //     .arg("export")
-    //     .arg("erlang-shipment")
-    //     .current_dir(&contents_dir)
-    //     .stderr(std::process::Stdio::inherit())
-    //     .output()
-    //     .map_err(|e| {
-    //         GleamPkgError::PackageBuildError(format!(
-    //             "Failed to run `gleam export erlang-shipment` in contents directory: {}, {}",
-    //             contents_dir.display(),
-    //             e
-    //         ))
-    //     })?;
-    // if !output.status.success() {
-    //     return Err(GleamPkgError::PackageBuildError(format!(
-    //         "Failed to export package: {}",
-    //         String::from_utf8_lossy(&output.stderr)
-    //     )));
-    // }
 
     // add gleescript to the package and run it
     // gleam add gleescript && gleam run -m gleescript -- --out=build
@@ -480,7 +483,24 @@ fn build_package(
         )));
     }
 
-    println!("Package built successfully, installing to apps directory");
+    // now we need to get current running erlang vm's version and other info
+    // and embed it into the comment section of the escript
+
+    let output = erl_eval(
+        &"io:format(standard_io, \"~s~n\", [erlang:system_info(system_version)]).".to_string(),
+    )?;
+    let erlang_version = output.trim();
+    println!("Erlang system version: {}", erlang_version);
+
+    // let output = erl_eval(&format!(
+    //     "io:format(\"~p~n\", [escript:extract(\"{}\", [])]).",
+    //     contents_dir.join("build").join(package).display()
+    // ))?;
+
+    // println!(
+    //     "Escript generated successfully: {} ...",
+    //     &output[0..300],
+    // );
 
     // first remove the existing ~/.gleam_pkgs/apps/{package}-{version} directory
     let _ = fs::remove_dir_all(
@@ -491,60 +511,81 @@ fn build_package(
 
     let _ = fs::remove_file(HOME_ROOT_DIR.join(APPS_DIR).join(package));
 
-    // // the generated erlang shipment is in the build/erlang-shipment directory
-    // // copy it to ～/.gleam_pkgs/apps/{package}-{version}
-    // let result = copy_dir_all(
-    //     contents_dir.join("build").join("erlang-shipment"),
-    //     HOME_ROOT_DIR
-    //         .join(APPS_DIR)
-    //         .join(format!("{}-{}", package, version)),
-    // );
-    // if let Err(e) = result {
-    //     return Err(GleamPkgError::PackageBuildError(format!(
-    //         "Failed to copy erlang shipment to apps directory: {}",
-    //         e
-    //     )));
-    // }
-
-    // // now let's create a shell named {package} in ~/.gleam_pkgs/apps
-    // // it should only do one thing: cd to the {package}-{version} directory
-    // // and run ./entrypoint.sh run
-    // // we should pass everything after the `./entrypoint.sh run`
-    // // as arguments to the entrypoint
-    // let shell = format!(
-    //     "#!/bin/sh\ncd {}/{}/{}-{} && ./entrypoint.sh run \"$@\"\n",
-    //     HOME_ROOT_DIR.display(),
-    //     APPS_DIR,
-    //     package,
-    //     version
-    // );
-    // let shell_path = HOME_ROOT_DIR.join(APPS_DIR).join(package);
-    // fs::write(&shell_path, shell).map_err(|e| {
-    //     GleamPkgError::PackageBuildError(format!(
-    //         "Failed to create shell script in apps directory: {}",
-    //         e
-    //     ))
-    // })?;
-
-    // // enable the shell script to be executed
-    // let permissions = fs::metadata(&shell_path)?.permissions();
-    // let mut new_permissions = permissions.clone();
-    // new_permissions.set_mode(0o755);
-    // fs::set_permissions(&shell_path, new_permissions).map_err(|e| {
-    //     GleamPkgError::PackageBuildError(format!(
-    //         "Failed to set permissions on shell script: {}",
-    //         e
-    //     ))
-    // })?;
-
-    // gleescript will create excutable escript named {package} in build/{package-name}
-    // copy it to ~/.gleam_pkgs/apps
-    let escript_path = contents_dir.join("build").join(package);
-    let escript_dest = HOME_ROOT_DIR.join(APPS_DIR).join(package);
-    fs::copy(&escript_path, &escript_dest).map_err(|e| {
+    // now we create another shell script to wrap the binary escript
+    // this wrapper will detect os, exam erlang version compatibility
+    // and eventually run the escript bundled inside the shell script
+    let wrapper = HOME_ROOT_DIR.join(APPS_DIR).join(package);
+    let mut file = fs::File::create(&wrapper).map_err(|e| {
         GleamPkgError::PackageBuildError(format!(
-            "Failed to copy escript({}) to apps directory: {}",
-            escript_path.display(),
+            "Failed to create wrapper script: {}, {}",
+            wrapper.display(),
+            e
+        ))
+    })?;
+
+    // read binary escript's content in Vec<u8>
+    let escript = fs::read(contents_dir.join("build").join(package)).map_err(|e| {
+        GleamPkgError::PackageBuildError(format!(
+            "Failed to read escript: {}, {}",
+            contents_dir.join("build").join(package).display(),
+            e
+        ))
+    })?;
+
+    let escript_base64 = STANDARD.encode(&escript);
+
+    let wrapper_code = format!(
+        r#"#!/bin/sh
+# This is a wrapper script for the escript generated by gleam-pkg
+
+COMPILED_ERLANG_VERSION="{erlang_version}"
+
+# Check if the Erlang version is the same
+CURRENT_ERLANG_VERSION=$(erl -noshell -eval 'io:format("~s", [erlang:system_info(system_version)]).' -s init stop)
+
+if [ "$CURRENT_ERLANG_VERSION" != "$COMPILED_ERLANG_VERSION" ]; then
+    echo "Erlang version mismatch: compiled with $COMPILED_ERLANG_VERSION, running $CURRENT_ERLANG_VERSION"
+    echo "Please recompile the package with the correct Erlang version"
+    exit 1
+fi
+
+# Decode base64 content to a temporary file
+TEMP_DIR=$(mktemp -d)
+ESCRIPT_PATH="$TEMP_DIR/escript"
+echo "{escript_base64}" | base64 -d > "$ESCRIPT_PATH"
+
+# Make it executable
+chmod +x "$ESCRIPT_PATH"
+
+# Run the escript
+"$ESCRIPT_PATH" "$@"
+
+# Clean up
+rm -rf "$TEMP_DIR"
+"#
+    );
+
+    file.write_all(wrapper_code.as_bytes()).map_err(|e| {
+        GleamPkgError::PackageBuildError(format!(
+            "Failed to write to wrapper script: {}, {}",
+            wrapper.display(),
+            e
+        ))
+    })?;
+
+    // add execute permission to the wrapper script using Unix permissions
+    let mut perms = file.metadata().map_err(|e| {
+        GleamPkgError::PackageBuildError(format!(
+            "Failed to get metadata for wrapper script: {}, {}",
+            wrapper.display(),
+            e
+        ))
+    })?.permissions();
+    perms.set_mode(0o755);
+    file.set_permissions(perms).map_err(|e| {
+        GleamPkgError::PackageBuildError(format!(
+            "Failed to set permissions for wrapper script: {}, {}",
+            wrapper.display(),
             e
         ))
     })?;
@@ -560,6 +601,7 @@ fn build_package(
 }
 
 /// Recursively copy a directory and its contents to another directory
+#[allow(dead_code)]
 fn copy_dir_all(
     src: impl AsRef<std::path::Path>,
     dst: impl AsRef<std::path::Path>,

@@ -29,10 +29,19 @@ gleewhois --help
 - workspace under `$home/.gleam_pkgs`
 - package metadata management for installation and uninstallation
 
+## uninstalling
+
+```bash
+rm -rf ~/.gleam_pkgs
+```
+
+and remove the gleam_pkgs path in PATH env from your shell rc file.
+
 ## repos of gleam cli apps
 
 - [gleamfonts](https://github.com/massix/gleamfonts) (not in hex)
 - [ormlette](https://github.com/ashercn97/ormlette) [hex](https://hex.pm/packages/ormlette)
 - [gleewhois](https://github.com/kjartanhr/gleewhois) [hex](https://hex.pm/packages/gleewhois)
+- [gleescript](https://github.com/lpil/gleescript) [hex](https://hexdocs.pm/gleescript)
 
 wheatfox 2024
