@@ -10,7 +10,6 @@ to compile:
 
 ```bash
 git clone https://github.com/enkerewpo/gleam-pkg
-git submodule update --init --recursive
 cargo build
 ```
 ## usage example
@@ -42,6 +41,6 @@ and remove the gleam_pkgs path in PATH env from your shell rc file.
 - [gleamfonts](https://github.com/massix/gleamfonts) (not in hex)
 - [ormlette](https://github.com/ashercn97/ormlette) [hex](https://hex.pm/packages/ormlette)
 - [gleewhois](https://github.com/kjartanhr/gleewhois) [hex](https://hex.pm/packages/gleewhois)
-- [gleescript](https://github.com/lpil/gleescript) [hex](https://hexdocs.pm/gleescript)
+- [gleescript](https://github.com/lpil/gleescript) [hex](https://hexdocs.pm/gleescript) but with dev deps
 
 wheatfox 2024
