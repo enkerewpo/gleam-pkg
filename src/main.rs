@@ -413,26 +413,73 @@ fn build_package(
             String::from_utf8_lossy(&output.stderr)
         )));
     }
-    // then run `gleam export erlang-shipment`
+
+    // // then run `gleam export erlang-shipment`
+    // let output = std::process::Command::new("gleam")
+    //     .arg("export")
+    //     .arg("erlang-shipment")
+    //     .current_dir(&contents_dir)
+    //     .stderr(std::process::Stdio::inherit())
+    //     .output()
+    //     .map_err(|e| {
+    //         GleamPkgError::PackageBuildError(format!(
+    //             "Failed to run `gleam export erlang-shipment` in contents directory: {}, {}",
+    //             contents_dir.display(),
+    //             e
+    //         ))
+    //     })?;
+    // if !output.status.success() {
+    //     return Err(GleamPkgError::PackageBuildError(format!(
+    //         "Failed to export package: {}",
+    //         String::from_utf8_lossy(&output.stderr)
+    //     )));
+    // }
+
+    // add gleescript to the package and run it
+    // gleam add gleescript && gleam run -m gleescript -- --out=build
     let output = std::process::Command::new("gleam")
-        .arg("export")
-        .arg("erlang-shipment")
+        .arg("add")
+        .arg("gleescript")
         .current_dir(&contents_dir)
         .stderr(std::process::Stdio::inherit())
         .output()
         .map_err(|e| {
             GleamPkgError::PackageBuildError(format!(
-                "Failed to run `gleam export erlang-shipment` in contents directory: {}, {}",
+                "Failed to run `gleam add gleescript` in contents directory: {}, {}",
                 contents_dir.display(),
                 e
             ))
         })?;
     if !output.status.success() {
         return Err(GleamPkgError::PackageBuildError(format!(
-            "Failed to export package: {}",
+            "Failed to add gleescript: {}",
             String::from_utf8_lossy(&output.stderr)
         )));
     }
+
+    let output = std::process::Command::new("gleam")
+        .arg("run")
+        .arg("-m")
+        .arg("gleescript")
+        .arg("--")
+        .arg("--out=build")
+        .current_dir(&contents_dir)
+        .stderr(std::process::Stdio::inherit())
+        .output()
+        .map_err(|e| {
+            GleamPkgError::PackageBuildError(format!(
+                "Failed to run `gleam run -m gleescript` in contents directory: {}, {}",
+                contents_dir.display(),
+                e
+            ))
+        })?;
+    if !output.status.success() {
+        return Err(GleamPkgError::PackageBuildError(format!(
+            "Failed to run gleescript: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+
     println!("Package built successfully, installing to apps directory");
 
     // first remove the existing ~/.gleam_pkgs/apps/{package}-{version} directory
@@ -444,48 +491,60 @@ fn build_package(
 
     let _ = fs::remove_file(HOME_ROOT_DIR.join(APPS_DIR).join(package));
 
-    // the generated erlang shipment is in the build/erlang-shipment directory
-    // copy it to ～/.gleam_pkgs/apps/{package}-{version}
-    let result = copy_dir_all(
-        contents_dir.join("build").join("erlang-shipment"),
-        HOME_ROOT_DIR
-            .join(APPS_DIR)
-            .join(format!("{}-{}", package, version)),
-    );
-    if let Err(e) = result {
-        return Err(GleamPkgError::PackageBuildError(format!(
-            "Failed to copy erlang shipment to apps directory: {}",
-            e
-        )));
-    }
+    // // the generated erlang shipment is in the build/erlang-shipment directory
+    // // copy it to ～/.gleam_pkgs/apps/{package}-{version}
+    // let result = copy_dir_all(
+    //     contents_dir.join("build").join("erlang-shipment"),
+    //     HOME_ROOT_DIR
+    //         .join(APPS_DIR)
+    //         .join(format!("{}-{}", package, version)),
+    // );
+    // if let Err(e) = result {
+    //     return Err(GleamPkgError::PackageBuildError(format!(
+    //         "Failed to copy erlang shipment to apps directory: {}",
+    //         e
+    //     )));
+    // }
 
-    // now let's create a shell named {package} in ~/.gleam_pkgs/apps
-    // it should only do one thing: cd to the {package}-{version} directory
-    // and run ./entrypoint.sh run
-    // we should pass everything after the `./entrypoint.sh run`
-    // as arguments to the entrypoint
-    let shell = format!(
-        "#!/bin/sh\ncd {}/{}/{}-{} && ./entrypoint.sh run \"$@\"\n",
-        HOME_ROOT_DIR.display(),
-        APPS_DIR,
-        package,
-        version
-    );
-    let shell_path = HOME_ROOT_DIR.join(APPS_DIR).join(package);
-    fs::write(&shell_path, shell).map_err(|e| {
-        GleamPkgError::PackageBuildError(format!(
-            "Failed to create shell script in apps directory: {}",
-            e
-        ))
-    })?;
+    // // now let's create a shell named {package} in ~/.gleam_pkgs/apps
+    // // it should only do one thing: cd to the {package}-{version} directory
+    // // and run ./entrypoint.sh run
+    // // we should pass everything after the `./entrypoint.sh run`
+    // // as arguments to the entrypoint
+    // let shell = format!(
+    //     "#!/bin/sh\ncd {}/{}/{}-{} && ./entrypoint.sh run \"$@\"\n",
+    //     HOME_ROOT_DIR.display(),
+    //     APPS_DIR,
+    //     package,
+    //     version
+    // );
+    // let shell_path = HOME_ROOT_DIR.join(APPS_DIR).join(package);
+    // fs::write(&shell_path, shell).map_err(|e| {
+    //     GleamPkgError::PackageBuildError(format!(
+    //         "Failed to create shell script in apps directory: {}",
+    //         e
+    //     ))
+    // })?;
 
-    // enable the shell script to be executed
-    let permissions = fs::metadata(&shell_path)?.permissions();
-    let mut new_permissions = permissions.clone();
-    new_permissions.set_mode(0o755);
-    fs::set_permissions(&shell_path, new_permissions).map_err(|e| {
+    // // enable the shell script to be executed
+    // let permissions = fs::metadata(&shell_path)?.permissions();
+    // let mut new_permissions = permissions.clone();
+    // new_permissions.set_mode(0o755);
+    // fs::set_permissions(&shell_path, new_permissions).map_err(|e| {
+    //     GleamPkgError::PackageBuildError(format!(
+    //         "Failed to set permissions on shell script: {}",
+    //         e
+    //     ))
+    // })?;
+
+    // gleescript will create excutable escript named {package} in build/{package-name}
+    // copy it to ~/.gleam_pkgs/apps
+    let escript_path = contents_dir.join("build").join(package);
+    let escript_dest = HOME_ROOT_DIR.join(APPS_DIR).join(package);
+    fs::copy(&escript_path, &escript_dest).map_err(|e| {
         GleamPkgError::PackageBuildError(format!(
-            "Failed to set permissions on shell script: {}",
+            "Failed to copy escript({}) to apps directory: {}",
+            escript_path.display(),
             e
         ))
     })?;
