@@ -2,6 +2,10 @@
 
 gleam package manager for installing Gleam CLI programs right inside your OS
 
+this is a prototype for functionality of gleam cli apps shipping and management.
+
+discussion here: https://github.com/gleam-lang/gleam/discussions/4136
+
 to compile:
 
 ```bash
